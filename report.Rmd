@@ -1,0 +1,623 @@
+---
+title: "Report on B2B Sales of an Anonymized Software Solution Company"
+author: "Nguyen P Doan"
+output: html_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Overview
+B2B dataset – a real world dataset (anonymized)
+
+Business-to-business (B2B) sales process represents a structural approach to sales, where establishing a relationship between parties plays very important role. In industrial segments, sales process often involves different business divisions on both sides (buyer, seller) jointly developing a project into a stage, where needs and expectations are well defined and the general parameters reflecting the delivery of the project are outlined. This requires a substantial resource planning, especially from a seller/delivery organization. It is of utmost importance for a seller to assess which opportunity will materialize. Particularly for SME’s, where negative outcome could have serious consequences, if company bets on the deal and dedicates a vast of resources to get it. Unfortunately, the nature of B2B sales opportunities is often binary; they happen as a whole deal or they do not happen at all.
+
+Companies usually track their sales efforts in CRM (Customer Relationship Management) system. Historical data create an opportunity to leverage machine learning (ML) techniques. ML has proven itself in other fields, therefore it is reasonable to expect that its application can decrease an error in B2B sales forecasting, too.
+
+To address the gap in availability of data sets related to B2B sales, we here provide one to support scientific research and application of ML to this field. It contains anonymized data from a real-world company, selling software solutions and services internationally. It contains of 448 instances, described with 22 attributes + 1 for outcome status.
+
+## Description of Features
+
+* **Product**: Offered product.
+* **Seller**:	Seller’s name.
+* **Authority**: Authority level at a client side.
+* **Comp_size**:	Size of a company.
+* **Competitors**: Do we have competitors?
+* **Purchasing department**: Is the purchasing department involved?
+* **Partnership**:	Selling in partnership?	
+* **Budget allocated**:	Did the client reserve the budget?	
+* **Formal tender**: Is a tendering procedure required?
+* **RFI**: Did we get Request for Information?
+* **RFP**: Did we get Request for Proposal?
+* **Growth**: Growth of a client?
+* **Positive statements**: Positive attitude expressed?
+* **Source**:	Source of the opportunity.
+* **Client**:	Type of a client.
+* **Scope clarity**: Implementation scope defined?
+* **Strategic deal**:	Does this deal have a strategic value?
+* **Cross sale**:	Do we sell a different product to existing client?
+* **Up sale**:	Increasing existing products?
+* **Deal type**:	Type of a sale.
+* **Needs defined**: Is client clear in expressing the needs?
+* **Attention** to client: Attention to a client.
+* **Status**: An outcome of sales opportunity.
+
+```{r, echo=FALSE, message=FALSE}
+library(mice) #Missing values imputation
+library(ggplot2) #Visualization
+library(randomForest) #RF
+library(caret) #Confusion matrix
+library(e1071) #SVM
+library(ROCR) #AUC
+library(corrplot) #correlation plot
+library(dplyr) #Visualization
+```
+
+## Summary of Features and Response
+
+Loading dataset:
+```{r}
+rm(list=ls()) #clear current R environment
+full <- read.csv('http://www.salvirt.com/?smd_process_download=1&download_id=4128', sep = ';')
+```
+
+Quick look at the data, number of response between Lost and Won sales is balanced. 
+
+```{r}
+barchart(full$Status)
+```
+
+There are unknown values in Competitors, Purch_dept, Budgt_alloc, Growth, and Source. It is better to convert these to NA values and perform missing value imputation.
+
+Seller may not be a good feature to include in the analysis since we do not have any measure on how experience each seller is. However, we can assess performance of sellers in term of Won percentage.
+
+```{r}
+summary(full)
+```
+
+Shorten values of Product for better readability.
+```{r}
+levels(full$Product)[levels(full$Product) == 'Product A'] <- 'A'
+levels(full$Product)[levels(full$Product) == 'Product B'] <- 'B'
+levels(full$Product)[levels(full$Product) == 'Product C'] <- 'C'
+levels(full$Product)[levels(full$Product) == 'Product D'] <- 'D'
+levels(full$Product)[levels(full$Product) == 'Product E'] <- 'E'
+levels(full$Product)[levels(full$Product) == 'Product F'] <- 'F'
+levels(full$Product)[levels(full$Product) == 'Product G'] <- 'G'
+levels(full$Product)[levels(full$Product) == 'Product H'] <- 'H'
+levels(full$Product)[levels(full$Product) == 'Product I'] <- 'I'
+levels(full$Product)[levels(full$Product) == 'Product J'] <- 'J'
+levels(full$Product)[levels(full$Product) == 'Product K'] <- 'K'
+levels(full$Product)[levels(full$Product) == 'Product L'] <- 'L'
+levels(full$Product)[levels(full$Product) == 'Product N'] <- 'N'
+levels(full$Product)[levels(full$Product) == 'Product P'] <- 'P'
+```
+
+Convert Unknown values to NA values.
+```{r}
+levels(full$Competitors)[levels(full$Competitors) == 'Unknown'] <- NA
+levels(full$Purch_dept)[levels(full$Purch_dept) == 'Unknown'] <- NA
+levels(full$Budgt_alloc)[levels(full$Budgt_alloc) == 'Unknown'] <- NA
+levels(full$Source)[levels(full$Source) == 'Unknown'] <- NA
+levels(full$Growth)[levels(full$Growth) == 'Unknown'] <- NA
+```
+
+Before we can compute correlation plot, we need to handle NA values for the five features with NA values.
+```{r, warning = FALSE}
+set.seed(1)
+imp <- mice(full, method = 'pmm')
+data.full <- complete(imp)
+remove(imp, full)
+```
+
+Checking if the imputation for NA values work. Summary shows no more missing values in all features.
+```{r}
+sapply(data.full, function(x) sum(is.na(x)))
+```
+
+Correlation heatmap between all features. The correlation plot shows that there are correlation between Status, Client, Competitors, and Up_sale. Hence, a quick and detailed check at these features would provide more information.
+```{r}
+cor.df <- lapply(data.full, as.integer)
+corrplot(cor(as.data.frame(cor.df)))
+remove(cor.df)
+```
+
+##Exploratory Data Analysis
+
+1.  Client and Status
+
+The company has more Won than Lost for current clients. In other words, they have more winning chance with current clients. They lose a lot with new clients. Currently, it is unclear what the reason is.
+```{r}
+ggplot(data.full, aes(x=Client, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+2.  Competitors and Status
+
+When the company has Competitors, the company has more Lost than Won.
+```{r}
+ggplot(data.full, aes(x=Competitors, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+3.  Competitors given Client and Status
+
+Further investigation shows that Competitors perform better with new clients. Even with current clients, if the company has Competitors, the Competitors still win slightly more. It is possible that Competitors have better deals or offerings.
+```{r}
+ggplot(data.full, aes(x=Competitors, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Client, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+4. Deal_type and Status
+
+The company focuses on Project and Solution deal. For Project deal, there are more Won than Lost. For Solution deal, there are more Lost than Won. However, although Maintenance deal does not have a lot of sales but the Won percentage is very high. 
+```{r}
+ggplot(data.full, aes(Deal_type, fill = Status)) + 
+  geom_bar(position = 'stack') + 
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+5.  Deal_type given Competitors and Status
+
+Which service does the company have a lot of competitors? 
+
+Only in Project and Solution deal, the company has competitors. Given the Project and Solution, the company lose more when they have competitors. From this and previous point, it is quite clear that the company does not have competitive advantage against their competitors.
+
+In plot 4., it shows that the company has a high percentage of Won in Maintenance deal. This section just shows that only because they do not have Competitors in Maintenance, they can have more Won sales.
+```{r}
+ggplot(data.full, aes(x=Deal_type, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Competitors, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+6.  Partnership and Status
+
+Whether the company has Partnership with Clients.
+It appears that if the company has Partnership with Clients, they have more Won sales.
+
+```{r}
+ggplot(data.full, aes(x=Partnership, fill = Status)) +
+  geom_bar(position = 'fill') +
+  theme(legend.position = 'right') +
+  theme_bw()
+```
+
+7.  Purch_dept and Status
+
+Involving Purchasing department does not result in higher Won sales. 
+```{r,  }
+ggplot(data.full, aes(x=Purch_dept, fill = Status)) +
+  geom_bar(position = 'fill') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+8.  Budgt_alloc and Status
+
+Budget allocation does not contribute to Status of sales.
+```{r}
+ggplot(data.full, aes(x=Budgt_alloc, fill = Status)) +
+  geom_bar(position = 'fill') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+11. Source and Status
+
+Investigate which sales channel give more won cases. Joint past source and referral constitute a majority of sales channel. 
+
+Referral has only 24% Won rate (out of 54 attempts). 
+
+Joint past performs better than referral with 61% Won rate (out of 346 attempts). A quick suggestion would be to focus more on joint past source.
+
+Media performs very bad because it returns less than 6% Won sales out of 24 attempts.
+
+Direct Mail and Online Form is worse because it returns 0% Won sales out of 16 and 3 attempts, respectively.
+
+Other has about 33% Won rate (out of 3 attempts).
+```{r}
+ggplot(data.full, aes(x=Source, fill = Status)) +
+  geom_bar(position = 'fill') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+```{r}
+summary(data.full$Source)
+```
+```{r}
+round(prop.table(table(data.full$Source, data.full$Status), 1),4)
+```
+
+12. Source given Client and Status
+
+The company seems to focus on getting new clients by Referral, Joint Past and Media. Since the company does not perform well in Referral and Media, they have not been able to get more new clients. However, even with Joint Past, the company still struggles. 
+
+Possible reasons: Marketing department does not function well in promoting their products. The products do not follow new clients' standards that even Referral and Joint Past do not help much. This is possibly a responsibility of Product development department.
+
+```{r}
+ggplot(data.full, aes(x=Client, fill = Source)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Status, labeller = label_both) +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+13. Client given Up_sale, and Status
+
+Increasing sales of existing productst to current clients contributes to more Won sales. 
+
+Increasing sales of exisitng products to new clients does not help with getting Won sales from new clients.
+
+This just shows that current products struggle a lot with new clients. 
+
+Possible reasons: products are not good enough.
+
+```{r}
+ggplot(data.full, aes(x=Client, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Up_sale, labeller = label_both) +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+14. Cross_sale and Status
+
+The company sells different products to existing clients. But when they do, they are not too successful at selling new products to existing clients.
+```{r}
+ggplot(data.full, aes(x=Cross_sale, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+15. Client given Strat_deal, and Status
+
+Deals with Very Important strategic value have better chance at winning, with 62% Won rate.
+
+In the category of Average important deals, there is very low chance to get Won sales with new clients.
+
+They should focus on deals with Very Important and Average Important deals with current clients.
+
+Possible reasons: given the importance of a deal, new clients may not be satisfied with the current products.
+```{r}
+ggplot(data.full, aes(x=Client, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Strat_deal, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+16. Client and Posit_statm
+
+We investigate attitude of existing, new, and past clients. For example, did clients express positively with the company's product? 
+
+Overall, Current Clients shows Positive and Neutral attitudes toward the company's product. But there are more Neutral than Positive. This is a bad sign because it shows possibility for current clients to switch since they are not fully happy with current product.
+
+New clients also have more Neutral than Positive attitudes toward products.
+
+Possible reasons: bad products and management.
+
+```{r}
+ggplot(data.full, aes(x=Client, fill = Posit_statm)) +
+  geom_bar(position = 'dodge') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+17. Deal_type and Status
+
+The company seems to focus in Project and Solution deal. However, they do not perform well in Solution deal. In fact, they do not seem to have a clear distinction in term of excellence of products in both Project and Solution deal.
+
+Interestingly, they have a very high Won rate with Maintenace deal.
+
+Possible reasons: Solution may be the product that performs badly for the company. On the other hand, the company should look into expanding their Maintenance product since it performs quite well.
+
+```{r}
+ggplot(data.full, aes(x=Deal_type, fill = Status)) +
+  geom_bar(position = 'fill') +
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+18. Client given Deal_type, and Status
+
+Which deal type do we win a lot? 
+
+For Project deal, the company wins a lot with existing clients. 
+
+In all deal types, the company does not perform better with new clients. 
+
+Again, especially in Solution product, the company has a very low Won rate with new clients.
+
+```{r}
+ggplot(data.full, aes(x=Client, fill = Status)) +
+  geom_bar(position = 'fill') +
+  facet_grid(.~Deal_type, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+19. Needs_def and Scope
+
+Assesing communication between the company and clients. For example, whether the company fully understand what clients' needs and scope are.
+
+Most of the time, the communication between company and clients in term of needs and scope is clear.
+
+New clients also have very clear communication in term of scope and needs with the company. But these clear communications do not convert into Won sales.
+
+Possible reasons: the company fully understand everything, but their product may not meet new clients' standard.
+```{r}
+ggplot(data.full, aes(x=Needs_def, fill = Scope)) +
+  geom_bar(position = 'stack') +
+  facet_grid(.~Client, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+20. Forml_tend given RFP (Request for Proposal), and Status
+
+When clients request for proposal with no formal tendering, or process of inviting for bids, the company win more sales.
+```{r}
+ggplot(data.full, aes(x=Forml_tend, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~RFP, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+21. Product given Client, and Status
+
+Bingo! It seems like almost all products do not meet clients' needs or standards. But since we verified in plot-18 that clients and the company have very clear communication regarding needs and scope, it is clear that these products do not meet clients' standards. 
+
+There is a small percentage of new clients that agree to a sale with the company. In fact, only 27 out of 158 (about 17%) new clients make a sale agreement.
+
+The company tries to sell Product D but the Won rate is 1.8% (1 out of 54 attempts)!
+Product G, J, K, L, and N fail to reach a sale completely.
+
+```{r }
+ggplot(data.full[data.full[,'Client'] != 'Past',], aes(x=Product, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Client, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw()
+```
+
+* Table of Won rate of all products for new clients
+
+```{r}
+won <- table(data.full$Product[data.full$Status == 'Won' & data.full$Client == 'New'])
+won <- round(won/table(data.full$Product[data.full$Client == 'New'])*100, 2)
+won <- data.frame(won)
+colnames(won) <- c('Product', 'Percent') 
+print(won)
+remove(won)
+```
+
+* Table of Lost rate of all products for new clients
+
+```{r}
+lost <- table(data.full$Product[data.full$Status == 'Lost' & data.full$Client == 'New'])
+lost <- round(lost/table(data.full$Product[data.full$Client == 'New'])*100, 2)
+lost <- data.frame(lost)
+colnames(lost) <- c('Product', 'Percent') 
+print(lost)
+remove(lost)
+```
+
+22. Growth given Client, and Status
+
+There is a problem with this company's product. Most of exisiting clients who use the company's product does not exhibit any growth. Only a small portion of clients show some type of growth. 
+```{r}
+ggplot(data.full, aes(x=Growth, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Client, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+23. Comp_size given Client, and Status
+
+Assessing clients' company size.
+
+```{r}
+ggplot(data.full, aes(x=Comp_size, fill = Status)) +
+  geom_bar(position = 'dodge') +
+  facet_grid(.~Client, labeller = label_both)+
+  theme(legend.position = 'right') +
+  theme_bw() 
+```
+
+## Data Modeling
+
+First, we remove Seller from the dataset. We also need to split the data into train and test set. 
+
+```{r}
+data.full <- subset(data.full, select = -c(Seller))
+
+set.seed(123)
+train <- sample(1:nrow(data.full), nrow(data.full)*2/3)
+
+data.train <- data.full[train,]
+data.test <- data.full[-train,]
+remove(train, data.full)
+```
+
+Now, we are ready to build some predictive models.
+
+### 1. Random Forest
+
+I create a function **rf.optim** that automatically find the optimal number of trees (ntree) and number of features at each split (mtry). In other words, this function should return a random forest model with highest accuracy given a selected range of ntree and mtry. There are 4 straightforward parameters that need to be inserted:
+
+* **train_set**: training data
+* **test_set**: testing data
+* **mtry_range**: a vector of mtry values
+* **ntree_rage**: a vector of ntree values
+
+```{r}
+rf.optim <- function(train_set, test_set, mtry_range, ntree_range){
+  ntree = c()
+  mtry = c()
+  accuracy = c()
+  for (i in mtry_range){
+    for (j in ntree_range){
+      rf.tune <- randomForest(x = train_set[,-length(train_set)], 
+                               y = train_set[,length(train_set)], 
+                               ntree = j,
+                               mtry = i,
+                               doBest = TRUE,
+                               importance = TRUE)
+      rf.predict <- predict(rf.tune, newdata = test_set[, -length(data.test)])
+      conf.matrix <- confusionMatrix(rf.predict, test_set[,'Status'])
+      mtry = c(mtry, i)
+      ntree = c(ntree, j)
+      accuracy = c(accuracy, conf.matrix$overall[1])
+      remove(rf.tune, rf.predict, conf.matrix)
+    }
+  }
+  
+  rf.result <- data.frame(tree = ntree, mtry = mtry, accuracy = accuracy)
+  
+  optim.tree = as.numeric(max(rf.result[rf.result$accuracy == max(rf.result$accuracy),1:2][1]))
+  optim.mtry = as.numeric(max(rf.result[rf.result$accuracy == max(rf.result$accuracy),1:2][2]))
+  
+  optim.model <- randomForest(x = train_set[,-length(train_set)], 
+                        y = train_set[,length(train_set)],
+                        ntree = optim.tree,
+                        mtry = optim.mtry,
+                        doBest = TRUE,
+                        importance = TRUE)
+  return(optim.model)
+}
+```
+
+Now, I can use **rf.optim** to build an optimal random forest model and make some predictions.
+
+```{r}
+optim.rf.mod <- rf.optim(train_set = data.train, 
+                         test_set = data.test,
+                         mtry_range = c(1:10),
+                         ntree_range = c(200,500,1000))
+rf.predict <- predict(optim.rf.mod, newdata = data.test[,-length(data.test)])
+conf.matrix <- confusionMatrix(rf.predict, data.test[,length(data.test)])
+```
+
+The accuracy of SVM model is `r as.numeric(conf.matrix$overall[1]) `. This means the model predicts correctly `r round(100*as.numeric(conf.matrix$overall[1]), 2)`% of the time.
+
+Random Forest is especially good when we need to see which features are important in prediction. As suspected in the EDA section, __Product__, __Client__, __Competitors__, and __Source__ are 4 of the top important features. Surprisingly, __Up_sale__ ranks first. This may mean that the company should focus more on increasing sales to existing clients in order to get more Won sales.
+
+```{r}
+importance <- as.data.frame(importance(optim.rf.mod))
+
+varImportance <- data.frame(Variables = row.names(importance),
+                                Importance= round(importance[,'MeanDecreaseGini'], 2))
+rankImportance <- varImportance %>%
+      mutate(Rank = paste0('#',dense_rank(desc(Importance))))
+      ggplot(rankImportance, aes(x = reorder(Variables, Importance) , 
+                             y = Importance, fill = Importance)) +
+      geom_bar(stat='identity') + 
+      geom_text(aes(x = Variables, y = 0.5, label = Rank),
+              hjust=0, vjust=0.55,size = 4, colour = 'red') +
+      labs(x = 'Variables') +
+      coord_flip() +
+      theme_bw()
+```
+
+Area under the curve (AUC) of the Receiver Operating Characteristic (ROC) curve is another goodness of fit that determine how good the classification model is. For example, I want an AUC value to be as close to 1 as possible.
+
+```{r}
+rf.predict.prob <- predict(optim.rf.mod, newdata = data.test[,-length(data.test)], type = 'prob')
+rf.prediction <- prediction(rf.predict.prob[,2], data.test[,'Status'])
+rf.perf <- performance(rf.prediction, 'tpr', 'fpr')
+
+auc.rf.temp <- performance(rf.prediction,"auc")
+rf.auc <- as.numeric(auc.rf.temp@y.values)
+
+cat('AUC of ROC curve for the Random Forest model is', rf.auc)
+
+plot(rf.perf, col=2, main = 'ROC of Random Forest')
+```
+
+```{r}
+#DO NOT RUN THIS WHEN NOT DONE WITH RANDOM FORST
+#remove all assigned variables in Random Forest section to clear environment
+remove(optim.rf.mod, rf.predict, importance, varImportance,
+       rf.predict.prob, rf.prediction, rf.perf, auc.rf.temp, rf.auc, rankImportance, conf.matrix)
+```
+
+### 2. Support Vector Machine
+
+Support Vector Machine (SVM) is a another popular classification algorithm. SVM is especially good when a dataset is small and low-dimensional.
+
+```{r}
+tc <- tune.control(cross = 10)
+svm.tune <- tune.svm(Status~., data = data.train, cost=2^c(-3:3),
+                     gamma=2^c(-3:3), kernel = 'radial', tunecontrol = tc, probability=TRUE)
+
+svm.predict <- predict(svm.tune$best.model, newdata = data.test[,-length(data.test)], probability = TRUE)
+confusionMatrix(svm.predict, data.test[,length(data.test)])
+```
+
+```{r}
+conf.matrix <- confusionMatrix(svm.predict, data.test[,length(data.test)])
+```
+
+The accuracy of SVM model is `r as.numeric(conf.matrix$overall[1]) `. This means the model predicts correctly `r round(100*as.numeric(conf.matrix$overall[1]),2)`% of the time. 
+
+Looking at AUC of ROC curve for SVM model and compare it with the AUC for Random Forest model.
+
+```{r}
+svm.prediction <- prediction(attr(svm.predict, "probabilities")[,1], data.test[,'Status'])
+svm.perf <- performance(svm.prediction, 'tpr', 'fpr')
+
+auc.svm.temp <- performance(svm.prediction,"auc")
+svm.auc <- as.numeric(auc.svm.temp@y.values)
+
+cat('AUC of ROC curve for the SVM model is', svm.auc)
+
+plot(svm.perf, col=1, main = 'ROC of SVM')
+```
+
+```{r}
+#DO NOT RUN THIS WHEN NOT DONE WITH SVM
+#remove all assigned variables in SVM section to clear environment
+remove(tc, svm.tune, svm.predict, svm.prediction, 
+       svm.perf, auc.svm.temp, svm.auc, conf.matrix)
+```
+
+## Conclusion and Suggestion
+
+Due to a small dataset, I successfully achieve 77% accuracy with Random Forest.
+
+After a careful investigation, several points are needed to look at:
+
+1.  The company focuses in Maintenance, Project and Solution service. They win a lot of sales for Project and Solution with current clients, but not with new clients. In Maintenance, they have the highest chance of getting Won sales. But they have not had any new clients that need Maintenance.
+2.  The company has competitors in Project and Solution deal And the competitors win more sales with the company's new clients than the company does.
+3.  The main source of sales for the company is Joint Past. They score less sales in other sources such as Direct Mail, Media and Referral. 
+4.  The company has not been successful with getting sales from new client. However, they has performed much better with getting more sales from current clients.
+5.  The company has been trying to sell different products to clients' original requested product, but they have not been too successful. 
+6.  Current clients have more neutral attitude than positive attitude toward the company's service. This may lead to clients switching to other competitors.
+6.  A majority of current clients who use company's product has a stable growth, but not increasing growth. 
+7.  The company mainly struggles with medium and small companies in finalizing a sale.
+
+Conclusion: There is definitely something wrong with the product that the company is offering. They have not been able to score sales with new clients. Further investigation suggests that the company struggles with clients in big, medium and small size. They also have competitors, who actually perform better in their focusing areas.
+
+Suggestions:
+
+1. Improving products for Maintenance and Project, especially for Maintenance because it has a highest win rate. 
+2. Products need to result in increasing growth for clients in order to keep them.
+3. It is not advisable to spend too much resource in Direct Mail, Media and Referral channel since they return a very low conversion rate. 
+4. Investigate competitors because they are one of important reasons why the company cannot get new clients.
+5. Cross sales do not seem effectively. Instead, the company should focus on providing a client's requested product as excellent as possible.
+
+
