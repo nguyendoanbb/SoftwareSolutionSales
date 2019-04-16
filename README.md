@@ -1,4 +1,4 @@
-##Report on B2B Sales of an Anonymized Software Solution Company
+#Report on B2B Sales of an Anonymized Software Solution Company
 
 B2B dataset – a real world dataset (anonymized)
 
